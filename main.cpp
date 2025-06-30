@@ -699,6 +699,9 @@ void drawLine(std::vector<std::array<int, 3>>& img, int screen_x, int screen_y,
 	int sy = (y0 < y1) ? 1 : -1;
 	int err = dx + dy; // error value
 
+	int iters = 0;
+	const int MAXITERS = max(screen_x, screen_y) * 2;
+
 	while (true)
 	{
 		if (x0 >= 0 && x0 < screen_x && y0 >= 0 && y0 < screen_y)
@@ -723,6 +726,13 @@ void drawLine(std::vector<std::array<int, 3>>& img, int screen_x, int screen_y,
 		{
 			err += dx;
 			y0 += sy;
+		}
+
+		iters++;
+
+		if (iters > MAXITERS) // failsafe
+		{
+			break;
 		}
 	}
 }
@@ -844,6 +854,11 @@ void renderSolarSystem(State st, Vec3 mp_pos, std::vector<Vec3> mp_orbit,
 
 	for (int idx_star = 0; idx_star < std::get<0>(starfield).size(); idx_star++)
 	{
+		if (std::get<0>(starfield)[idx_star] > 6) // don't draw too dim stars, clutters the background
+		{
+			continue;
+		}
+
 		double radius = 1; // normally in EVIS we have a mag2radius but we don't really need that here
 		double RA = std::get<1>(starfield)[idx_star];
 		double DEC = std::get<2>(starfield)[idx_star];
@@ -868,7 +883,7 @@ void renderSolarSystem(State st, Vec3 mp_pos, std::vector<Vec3> mp_orbit,
 			int pix_x = screen_x / 2 + px + 0.5;
 			int pix_y = screen_y / 2 - py + 0.5;
 
-			drawCircle(img, screen_x, screen_y, pix_x, pix_y, radius);
+			drawCircle(img, screen_x, screen_y, pix_x, pix_y, radius, {200, 200, 200});
 		}
 	}
 
@@ -965,6 +980,7 @@ double getNextLargerOrRetain(double value, const std::vector<double>& sorted_arr
 // s, starfield, cam_mode, cam_dist, cam_theta, cam_phi, fov, map_name
 void mapSS3D(State st, std::tuple<std::vector<double>, std::vector<double>, std::vector<double>> starfield,
 	std::string cam_mode, double cam_dist, double cam_theta, double cam_phi, double fov_deg,
+	std::string center_obj, std::string carrier_obj,
 	std::string map_name, int screen_x, int screen_y)
 {
 	double fov = deg2rad(fov_deg);
@@ -1012,13 +1028,20 @@ void mapSS3D(State st, std::tuple<std::vector<double>, std::vector<double>, std:
 	Vec3 mp_vel = Vec3(mp_ecl_vel[0], mp_ecl_vel[1], mp_ecl_vel[2]);
 
 	// get sampled two-body ellipse for the minor planet
-	std::vector<Vec3> mp_orbit = getKeplerOrbitPoints(mp_pos - major_pos_eclip[0], mp_vel - major_vel_eclip[0]);
+	std::vector<Vec3> mp_orbit = getKeplerOrbitPoints(mp_pos, mp_vel);
 
 	// get them for major bodies too
 	std::vector<std::vector<Vec3>> major_orbits;
 	for (int idx_major = 0; idx_major < SolarSystemState.size(); idx_major++)
 	{
-		major_orbits.push_back(getKeplerOrbitPoints(major_pos_eclip[idx_major] - major_pos_eclip[0], major_vel_eclip[idx_major] - major_vel_eclip[0]));
+		if (idx_major < 3) // having vectors relative to Sun instead of the barycenter makes some less wobbly
+		{
+			major_orbits.push_back(getKeplerOrbitPoints(major_pos_eclip[idx_major] - major_pos_eclip[0], major_vel_eclip[idx_major] - major_vel_eclip[0]));
+		}
+		else
+		{
+			major_orbits.push_back(getKeplerOrbitPoints(major_pos_eclip[idx_major], major_vel_eclip[idx_major]));
+		}
 	}
 
 	// now we can draw images
@@ -1037,20 +1060,21 @@ void mapSS3D(State st, std::tuple<std::vector<double>, std::vector<double>, std:
 
 	// we will push the camera as far back to include the next planet's orbit (unless the minor planet's orbit 
 	// is larger than Neptune's, in which case we will go even farther out)
-	std::vector<double> planet_sma = {69.8e6, 108.9e6, 152.1e6, 249.3e6, 816.4e6, 1506.5e6, 3001.4e6, 4558.9e6};
+	std::vector<double> planet_sma = { 69.8e6, 108.9e6, 152.1e6, 249.3e6, 816.4e6, 1506.5e6, 3001.4e6, 4558.9e6 };
 	double R_max = getNextLargerOrRetain(R_mp_max, planet_sma) * 1.33;
 	double fit_dist = R_max / tan(fov / 2);
 
 	Vec3 cam_pos = Vec3(0, 0, fit_dist);
-	std::vector<Vec3> cam_orient = { 
-		Vec3(1, 0, 0), 
+	std::vector<Vec3> cam_orient = {
+		Vec3(1, 0, 0),
 		Vec3(0, 1, 0),
-		Vec3(0, 0, 1) 
+		Vec3(0, 0, 1)
 	};
 
 	std::string save_name = "map_topdown/" + map_name + "_topdown.ppm";
 	renderSolarSystem(st, mp_pos, mp_orbit, major_pos_eclip, major_orbits, cam_mode, fov, screen_x, screen_y, cam_pos, cam_orient, starfield, save_name);
 
+	// ========== EDGE-ON ==========
 	cam_pos = Vec3(fit_dist, 0, 0);
 	cam_orient = {
 		Vec3(0, 1, 0),
@@ -1061,7 +1085,122 @@ void mapSS3D(State st, std::tuple<std::vector<double>, std::vector<double>, std:
 	save_name = "map_edgeon/" + map_name + "_edgeon.ppm";
 	renderSolarSystem(st, mp_pos, mp_orbit, major_pos_eclip, major_orbits, cam_mode, fov, screen_x, screen_y, cam_pos, cam_orient, starfield, save_name);
 
-	cam_pos = Vec3(cam_theta, cam_phi);
+	// ========== CUSTOM ==========
+	cam_pos = Vec3(cam_theta, cam_phi) * cam_dist;
+
+	if (strcmp(carrier_obj.c_str(), "None")) // NOT equal to "None"
+	{
+		if (!strcmp(carrier_obj.c_str(), "SOLAR_SYSTEM_BARYCENTER"))
+		{
+			cam_pos = Vec3(0, 0, 0);
+		}
+		else if (!strcmp(carrier_obj.c_str(), "SUN"))
+		{
+			cam_pos = major_pos_eclip[0];
+		}
+		else if (!strcmp(carrier_obj.c_str(), "MERCURY_BARYCENTER"))
+		{
+			cam_pos = major_pos_eclip[1];
+		}
+		else if (!strcmp(carrier_obj.c_str(), "VENUS_BARYCENTER"))
+		{
+			cam_pos = major_pos_eclip[2];
+		}
+		else if (!strcmp(carrier_obj.c_str(), "EARTH_BARYCENTER"))
+		{
+			cam_pos = major_pos_eclip[3];
+		}
+		else if (!strcmp(carrier_obj.c_str(), "MARS_BARYCENTER"))
+		{
+			cam_pos = major_pos_eclip[4];
+		}
+		else if (!strcmp(carrier_obj.c_str(), "JUPITER_BARYCENTER"))
+		{
+			cam_pos = major_pos_eclip[5];
+		}
+		else if (!strcmp(carrier_obj.c_str(), "SATURN_BARYCENTER"))
+		{
+			cam_pos = major_pos_eclip[6];
+		}
+		else if (!strcmp(carrier_obj.c_str(), "URANUS_BARYCENTER"))
+		{
+			cam_pos = major_pos_eclip[7];
+		}
+		else if (!strcmp(carrier_obj.c_str(), "NEPTUNE_BARYCENTER"))
+		{
+			cam_pos = major_pos_eclip[8];
+		}
+		else if (!strcmp(carrier_obj.c_str(), "MP"))
+		{
+			cam_pos = mp_pos;
+		}
+	}
+
+	Vec3 target_pos = Vec3(0, 0, 0);
+	if (!strcmp(center_obj.c_str(), "SOLAR_SYSTEM_BARYCENTER"))
+	{
+		target_pos = Vec3(0, 0, 0);
+	}
+	else if (!strcmp(center_obj.c_str(), "SUN"))
+	{
+		target_pos = major_pos_eclip[0];
+	}
+	else if (!strcmp(center_obj.c_str(), "MERCURY_BARYCENTER"))
+	{
+		target_pos = major_pos_eclip[1];
+	}
+	else if (!strcmp(center_obj.c_str(), "VENUS_BARYCENTER"))
+	{
+		target_pos = major_pos_eclip[2];
+	}
+	else if (!strcmp(center_obj.c_str(), "EARTH_BARYCENTER"))
+	{
+		target_pos = major_pos_eclip[3];
+	}
+	else if (!strcmp(center_obj.c_str(), "MARS_BARYCENTER"))
+	{
+		target_pos = major_pos_eclip[4];
+	}
+	else if (!strcmp(center_obj.c_str(), "JUPITER_BARYCENTER"))
+	{
+		target_pos = major_pos_eclip[5];
+	}
+	else if (!strcmp(center_obj.c_str(), "SATURN_BARYCENTER"))
+	{
+		target_pos = major_pos_eclip[6];
+	}
+	else if (!strcmp(center_obj.c_str(), "URANUS_BARYCENTER"))
+	{
+		target_pos = major_pos_eclip[7];
+	}
+	else if (!strcmp(center_obj.c_str(), "NEPTUNE_BARYCENTER"))
+	{
+		target_pos = major_pos_eclip[8];
+	}
+	else if (!strcmp(center_obj.c_str(), "MP"))
+	{
+		target_pos = mp_pos;
+	}
+
+	// dummy default orientation
+	cam_orient = {
+		Vec3(1, 0, 0),
+		Vec3(0, 1, 0),
+		Vec3(0, 0, 1)
+	};
+
+	Vec3 forward = (target_pos - cam_pos).normalized();
+	Vec3 forward_xy = Vec3(forward.x, forward.y, 0).normalized();
+	Vec3 right = Vec3(-forward_xy.y, forward_xy.x, 0);
+	Vec3 up = forward.cross(right).normalized();
+	right = up.cross(forward).normalized();
+
+	cam_orient[0] = right;
+	cam_orient[1] = up;
+	cam_orient[2] = -forward;
+
+	save_name = "map_custom/" + map_name + "_custom.ppm";
+	renderSolarSystem(st, mp_pos, mp_orbit, major_pos_eclip, major_orbits, cam_mode, fov, screen_x, screen_y, cam_pos, cam_orient, starfield, save_name);
 }
 
 void printHelpMsg()
@@ -1089,7 +1228,7 @@ int main(int argc, char* argv[])
 	std::string sv_path = "state_vectors.txt";
 	std::string spice_path = "data/SPICE/";
 
-	std::string center_obj = "SOLAR SYSTEM BARYCENTER";
+	std::string center_obj = "SOLAR_SYSTEM_BARYCENTER";
 	std::string carrier_obj = "None"; // the object which the camera is attached to
 
 	std::string cam_mode = "p"; // p for perspective, o for orthogonal
@@ -1218,7 +1357,7 @@ int main(int argc, char* argv[])
 
 	std::tuple<std::vector<double>, std::vector<double>, std::vector<double>> starfield;
 
-	if (!strcmp(starcatalog_path.c_str(), "None"))
+	if (strcmp(starcatalog_path.c_str(), "None"))
 	{
 		std::cout << "Reading star catalogue... ";
 		starfield = readTycho2(starcatalog_path);
@@ -1250,7 +1389,7 @@ int main(int argc, char* argv[])
 		std::string suffix = s.datetime;
 		std::replace(suffix.begin(), suffix.end(), ':', '_'); // keep the OS happy
 		std::string map_name = "map_" + suffix;
-		mapSS3D(s, starfield, cam_mode, cam_dist, cam_theta, cam_phi, fov, map_name, screen_x, screen_y);
+		mapSS3D(s, starfield, cam_mode, cam_dist, cam_theta, cam_phi, fov, center_obj, carrier_obj, map_name, screen_x, screen_y);
 	}
 	std::cout << "Done generating charts.\n";
 
