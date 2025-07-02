@@ -767,41 +767,83 @@ std::vector<Vec3> getKeplerOrbitPoints(Vec3 p, Vec3 v, int N_points = 720)
 
 	std::vector<Vec3> orbit_points;
 
-	// use (N_points + 1) points to close the curve
-	for (int k = 0; k < N_points + 1; ++k)
+	if (e < 1)
 	{
-		double nu = 2.0 * pi_c() * k / N_points; // true anomaly
+		// use (N_points + 1) points to close the curve
+		for (int k = 0; k < N_points + 1; ++k)
+		{
+			double nu = 2.0 * pi_c() * k / N_points; // true anomaly
 
-		// Compute radius in orbital plane
-		double r = a * (1 - e * e) / (1 + e * cos(nu));
-		double x_orb = r * cos(nu);
-		double y_orb = r * sin(nu);
-		double z_orb = 0;
+			// Compute radius in orbital plane
+			double r = a * (1 - e * e) / (1 + e * cos(nu));
+			double x_orb = r * cos(nu);
+			double y_orb = r * sin(nu);
+			double z_orb = 0;
 
-		// orbital transformation
-		double cos_o = cos(omega);
-		double sin_o = sin(omega);
-		double cos_i = cos(i); 
-		double sin_i = sin(i);
-		double cos_w = cos(arg_periapsis);
-		double sin_w = sin(arg_periapsis);
+			// orbital transformation
+			double cos_o = cos(omega);
+			double sin_o = sin(omega);
+			double cos_i = cos(i);
+			double sin_i = sin(i);
+			double cos_w = cos(arg_periapsis);
+			double sin_w = sin(arg_periapsis);
 
-		// position in orbital plane
-		double x1 = cos_w * x_orb - sin_w * y_orb;
-		double y1 = sin_w * x_orb + cos_w * y_orb;
-		double z1 = 0;
+			// position in orbital plane
+			double x1 = cos_w * x_orb - sin_w * y_orb;
+			double y1 = sin_w * x_orb + cos_w * y_orb;
+			double z1 = 0;
 
-		// rotate by inclination
-		double x2 = x1;
-		double y2 = cos_i * y1;
-		double z2 = sin_i * y1;
+			// rotate by inclination
+			double x2 = x1;
+			double y2 = cos_i * y1;
+			double z2 = sin_i * y1;
 
-		// rotate by longitude of ascending node
-		double x = cos_o * x2 - sin_o * y2;
-		double y = sin_o * x2 + cos_o * y2;
-		double z = z2;
+			// rotate by longitude of ascending node
+			double x = cos_o * x2 - sin_o * y2;
+			double y = sin_o * x2 + cos_o * y2;
+			double z = z2;
 
-		orbit_points.push_back(Vec3(x, y, z));
+			orbit_points.push_back(Vec3(x, y, z));
+		}
+	}
+	else // para- or hyperbolic orbit, only render around periapsis
+	{
+		// no need to close an open curve
+		for (int k = 0; k < N_points; ++k)
+		{
+			double nu = deg2rad(-85.0) + deg2rad(170.0) * k / (N_points - 1); // true anomaly
+
+			// Compute radius in orbital plane
+			double r = a * (1 - e * e) / (1 + e * cos(nu));
+			double x_orb = r * cos(nu);
+			double y_orb = r * sin(nu);
+			double z_orb = 0;
+
+			// orbital transformation
+			double cos_o = cos(omega);
+			double sin_o = sin(omega);
+			double cos_i = cos(i);
+			double sin_i = sin(i);
+			double cos_w = cos(arg_periapsis);
+			double sin_w = sin(arg_periapsis);
+
+			// position in orbital plane
+			double x1 = cos_w * x_orb - sin_w * y_orb;
+			double y1 = sin_w * x_orb + cos_w * y_orb;
+			double z1 = 0;
+
+			// rotate by inclination
+			double x2 = x1;
+			double y2 = cos_i * y1;
+			double z2 = sin_i * y1;
+
+			// rotate by longitude of ascending node
+			double x = cos_o * x2 - sin_o * y2;
+			double y = sin_o * x2 + cos_o * y2;
+			double z = z2;
+
+			orbit_points.push_back(Vec3(x, y, z));
+		}
 	}
 
 	return orbit_points;
